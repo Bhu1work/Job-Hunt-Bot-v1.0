@@ -1,0 +1,59 @@
+# ── Shared volume mounts ──────────────────────────────────────────────────────
+x-volumes: &shared-volumes
+  - ./data:/app/data                            # SQLite DB — persists between runs
+  - ./logs:/app/logs                            # Log files
+  - ./applications:/app/applications            # Per-job folders (resume, cover letter, emails)
+  - ./assets:/app/assets                        # master_resume.txt
+  - ./Resume:/app/Resume                        # Your PDF + DOCX originals
+  - ./resumes/generated:/app/resumes/generated  # Generated base resume variants
+  - ./credentials:/app/credentials              # Google service account (optional)
+
+# ── Shared service base — build ONCE, all services reuse the same image ──────
+x-base: &base
+  image: job-hunt-bot:latest
+  env_file: .env
+  volumes: *shared-volumes
+
+services:
+
+  # ── builder: builds the image (run `docker compose build builder` once) ─────
+  builder:
+    <<: *base
+    build: .
+
+  # ── bot: one-off pipeline commands ──────────────────────────────────────────
+  #    docker compose run --rm bot python main.py --phase 1
+  bot:
+    <<: *base
+
+  # ── scraper: Phase 1 — scrape jobs + H1B filter ─────────────────────────────
+  scraper:
+    <<: *base
+    command: python main.py --phase 1 --pages 8
+
+  # ── tailor: Phase 2 — Claude resume tailoring ───────────────────────────────
+  tailor:
+    <<: *base
+    command: python main.py --phase 2
+
+  # ── emailer: Phase 3 — find HR emails ───────────────────────────────────────
+  emailer:
+    <<: *base
+    command: python main.py --phase 3
+
+  # ── applier: Phase 4 — Playwright auto-apply ────────────────────────────────
+  applier:
+    <<: *base
+    command: python main.py --phase 4
+
+  # ── scheduler: Phase 5 daemon — runs 24/7, sends follow-ups + daily digest ──
+  scheduler:
+    <<: *base
+    command: python phase5_followup.py --daemon
+    restart: unless-stopped   # auto-restart if it crashes
+
+  # ── slack: interactive job selector + status bot (Socket Mode, no public URL) ─
+  slack:
+    <<: *base
+    command: python slack_bot.py
+    restart: unless-stopped

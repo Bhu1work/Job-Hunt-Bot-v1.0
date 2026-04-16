@@ -1,0 +1,42 @@
+# Secrets — never commit
+.env
+credentials/
+
+# Runtime data — generated, not source
+data/
+logs/
+applications/
+resumes/generated/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Assets — contain personal data, regenerate from base_data.py
+assets/master_resume.txt
+
+# Personal resume files — copy manually to this folder, do not commit
+Resume/
+

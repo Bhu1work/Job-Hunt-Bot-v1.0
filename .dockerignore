@@ -1,0 +1,22 @@
+# Never bake secrets into the image
+.env
+
+# No need to copy generated/runtime artifacts
+data/
+logs/
+applications/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# No need to copy test helpers
+smoke_test.py
+test_email.py
+test_connections.py
+
+# Git
+.git/
+.gitignore
