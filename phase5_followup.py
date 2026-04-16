@@ -134,13 +134,31 @@ def send_email(to: str, subject: str, body: str,
 
 # ── Cold email auto-sender ────────────────────────────────────────────────────
 
-def send_cold_emails_for_job(job_id: int) -> int:
+def send_cold_emails_for_job(job_id: int, require_applied: bool = True) -> int:
     """
-    Send all drafted cold emails for a job from bhuvanthatthari@gmail.com.
+    Send all drafted cold emails for a job.
+    By default only sends if the ATS application was submitted first
+    (applied_status = 'applied'). Pass require_applied=False to override.
     Returns count of emails sent.
     """
-    from database import get_db
+    from database import get_db, get_job
     sent = 0
+
+    # Gate: only send after ATS application is confirmed submitted
+    if require_applied:
+        job = get_job(job_id)
+        if not job:
+            logger.warning("send_cold_emails_for_job: job %d not found", job_id)
+            return 0
+        if job.get("applied_status") != "applied":
+            logger.info(
+                "Skipping cold email for job %d (%s @ %s) — "
+                "applied_status='%s', not 'applied'. "
+                "Submit the ATS application first.",
+                job_id, job.get("role", "?"), job.get("company", "?"),
+                job.get("applied_status", "unknown"),
+            )
+            return 0
 
     with get_db() as conn:
         rows = conn.execute(
@@ -166,17 +184,32 @@ def send_cold_emails_for_job(job_id: int) -> int:
                       f"to={row['to_email']} type={row['contact_type']}",
                       job_id=job_id)
             sent += 1
+            try:
+                from notifier import notify_cold_email_sent
+                # Look up role for the notification
+                from database import get_job
+                _job = get_job(job_id) or {}
+                notify_cold_email_sent(
+                    count=sent,
+                    recipient_email=row["to_email"],
+                    company=_job.get("company", ""),
+                    role=_job.get("role", ""),
+                )
+            except Exception:
+                pass
 
     return sent
 
 
 def send_all_pending_cold_emails(limit: int | None = None) -> int:
-    """Send all pending cold email drafts across all applied jobs."""
+    """Send pending cold email drafts — only for jobs with applied_status='applied'."""
     from database import get_db
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT job_id FROM outreach "
-            "WHERE outreach_type = 'cold_email' AND status = 'draft'"
+            "SELECT DISTINCT o.job_id FROM outreach o "
+            "JOIN jobs j ON j.id = o.job_id "
+            "WHERE o.outreach_type = 'cold_email' AND o.status = 'draft' "
+            "  AND j.applied_status = 'applied'"
         ).fetchall()
 
     job_ids = [r[0] for r in rows]
@@ -189,6 +222,11 @@ def send_all_pending_cold_emails(limit: int | None = None) -> int:
         time.sleep(2)  # respectful send rate
 
     logger.info("Cold emails sent: %d total", total)
+    try:
+        from notifier import notify_cold_batch_done
+        notify_cold_batch_done(total)
+    except Exception:
+        pass
     return total
 
 
@@ -229,6 +267,11 @@ def send_due_followups(day: int) -> int:
             sent += 1
 
     logger.info("Sent %d follow-up emails (day %d)", sent, day)
+    try:
+        from notifier import notify_followup_sent
+        notify_followup_sent(day, sent)
+    except Exception:
+        pass
     return sent
 
 

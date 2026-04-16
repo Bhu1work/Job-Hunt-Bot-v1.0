@@ -67,6 +67,12 @@ CLAUDE_MODEL_FAST   = os.getenv("CLAUDE_MODEL_FAST",   "claude-haiku-4-5")
 # ATS minimum score (0-100) to include a job in the pipeline
 ATS_MIN_SCORE       = int(os.getenv("ATS_MIN_SCORE", "80"))
 
+# ── Scrape filters ────────────────────────────────────────────────────────────
+# Only return jobs posted within N hours (e.g. 4). 0 = no filter.
+SCRAPE_HOURS_FRESH     = int(os.getenv("SCRAPE_HOURS_FRESH", "4"))
+# Only return mid-level positions (Associate / Mid-Senior on LinkedIn)
+SCRAPE_MID_LEVEL_ONLY  = os.getenv("SCRAPE_MID_LEVEL_ONLY", "true").lower() == "true"
+
 # ── Scraping targets ──────────────────────────────────────────────────────────
 SEARCH_KEYWORDS: list[str] = [
     "Data Engineer",

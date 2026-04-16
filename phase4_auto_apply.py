@@ -485,6 +485,12 @@ async def apply_to_job(job: dict, dry_run: bool = False) -> bool:
                 mark_applied(job["id"], ats="linkedin_easy_apply")
             except Exception:
                 pass
+            try:
+                from notifier import notify_application_sent
+                notify_application_sent(job["role"], job["company"], job["id"],
+                                        ats="LinkedIn Easy Apply", dry_run=dry_run)
+            except Exception:
+                pass
         return success
 
     ats = detect_ats(apply_url)
@@ -524,10 +530,15 @@ async def apply_to_job(job: dict, dry_run: bool = False) -> bool:
                 update_job_status(job["id"], "applied")
                 log_event("applied", f"ATS={ats} url={job['jd_url']}", job_id=job["id"])
                 logger.info("✓ Applied to %s @ %s", job["role"], job["company"])
-                # Update application folder metadata
                 try:
                     from application_manager import mark_applied
                     mark_applied(job["id"], ats=ats)
+                except Exception:
+                    pass
+                try:
+                    from notifier import notify_application_sent
+                    notify_application_sent(job["role"], job["company"], job["id"],
+                                            ats=ats, dry_run=dry_run)
                 except Exception:
                     pass
 
@@ -682,9 +693,21 @@ async def run_async(job_id: int | None = None, dry_run: bool = False,
         ok = await apply_to_job(job, dry_run=dry_run)
         if ok:
             success += 1
+        elif not dry_run:
+            # Mark as failed so the cold email gate knows not to send
+            update_job_status(job["id"], "failed")
+            log_event("apply_failed", f"url={job['jd_url']}", job_id=job["id"])
+            logger.warning("Apply failed for job %d (%s @ %s) — marked as failed",
+                           job["id"], job["role"], job["company"])
         await asyncio.sleep(3)  # pause between applications
 
     logger.info("Done. %d / %d applications submitted.", success, len(jobs))
+
+    try:
+        from notifier import notify_phase4_summary
+        notify_phase4_summary(success, len(jobs), dry_run=dry_run)
+    except Exception:
+        pass
 
 
 def run(job_id: int | None = None, dry_run: bool = False,
