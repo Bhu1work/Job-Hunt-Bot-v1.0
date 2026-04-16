@@ -62,6 +62,8 @@ def run_phase1(args) -> None:
         location=args.location or "United States",
         pages=args.pages,
         fetch_descriptions=args.fetch_descriptions,
+        hours_fresh=getattr(args, "hours_fresh", None),
+        mid_level_only=not getattr(args, "all_levels", False),
     )
 
 
@@ -171,6 +173,10 @@ def main() -> None:
     parser.add_argument("--job-ids", type=str, default="",
                         help="Comma-separated job IDs (from Slack selection)")
     parser.add_argument("--fetch-descriptions", action="store_true")
+    parser.add_argument("--hours-fresh", type=int, default=None,
+                        help="Only scrape jobs posted within N hours (default: from config)")
+    parser.add_argument("--all-levels", action="store_true",
+                        help="Include all seniority levels (default: mid-level only)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Phase 4: fill forms but don't submit")
     parser.add_argument("--daemon", action="store_true",

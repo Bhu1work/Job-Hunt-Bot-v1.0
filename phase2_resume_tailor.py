@@ -325,6 +325,19 @@ def process_job(job: dict, master_resume: str | None = None,
     except Exception as exc:
         logger.warning("  ⚠ Folder build failed (non-fatal): %s", exc)
 
+    # Slack notification — resume + cover letter ready
+    try:
+        from notifier import notify_resume_done
+        from database import get_db
+        ats_score = None
+        with get_db() as _c:
+            _row = _c.execute("SELECT ats_score FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if _row:
+                ats_score = _row["ats_score"]
+        notify_resume_done(role, company, job_id, ats_score=ats_score)
+    except Exception:
+        pass
+
     return {"resume_bullets": resume_bullets, "cover_letter": cover_letter}
 
 
@@ -416,6 +429,12 @@ def run(job_id: int | None = None, force: bool = False,
             logger.error("Failed job %d (%s): %s", job["id"], job["company"], exc)
 
     logger.info("Done. %d / %d jobs tailored.", success, len(jobs))
+
+    try:
+        from notifier import notify_phase2_summary
+        notify_phase2_summary(success, len(jobs))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

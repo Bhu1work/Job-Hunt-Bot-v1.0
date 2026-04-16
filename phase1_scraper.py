@@ -133,9 +133,16 @@ def save_h1b_companies(companies: list[dict]) -> int:
 LINKEDIN_JOBS_BASE = "https://www.linkedin.com/jobs/search"
 
 
-def scrape_linkedin(keyword: str, location: str, pages: int = 5) -> list[dict]:
+def scrape_linkedin(keyword: str, location: str, pages: int = 5,
+                    hours_fresh: int | None = None,
+                    mid_level_only: bool = False) -> list[dict]:
     """
     Scrape LinkedIn public job search (no login required for listing pages).
+
+    hours_fresh     : only return jobs posted within N hours (e.g. 4)
+                      LinkedIn param: f_TPR=r<seconds>
+    mid_level_only  : filter to Associate + Mid-Senior level (f_E=3,4)
+
     Returns list of raw job dicts.
     """
     jobs = []
@@ -145,9 +152,19 @@ def scrape_linkedin(keyword: str, location: str, pages: int = 5) -> list[dict]:
             "keywords": keyword,
             "location": location,
             "start": page * 25,
-            "f_WT": 2,  # remote filter (optional)
         }
-        logger.info("LinkedIn page %d — '%s' in '%s'", page + 1, keyword, location)
+
+        # Freshness filter — e.g. 4 hours = 14400 seconds
+        if hours_fresh:
+            params["f_TPR"] = f"r{hours_fresh * 3600}"
+
+        # Experience level: 3 = Associate, 4 = Mid-Senior level
+        if mid_level_only:
+            params["f_E"] = "3,4"
+
+        logger.info("LinkedIn page %d — '%s' in '%s' (fresh=%sh mid=%s)",
+                    page + 1, keyword, location,
+                    hours_fresh or "any", mid_level_only)
 
         try:
             soup = _get(LINKEDIN_JOBS_BASE, params=params)
@@ -198,18 +215,36 @@ def fetch_linkedin_description(jd_url: str) -> str:
 INDEED_BASE = "https://www.indeed.com/jobs"
 
 
-def scrape_indeed(keyword: str, location: str, pages: int = 5) -> list[dict]:
-    """Scrape Indeed job listings."""
+def scrape_indeed(keyword: str, location: str, pages: int = 5,
+                  hours_fresh: int | None = None,
+                  mid_level_only: bool = False) -> list[dict]:
+    """
+    Scrape Indeed job listings.
+
+    hours_fresh     : only jobs posted within N hours — maps to fromage (days, min 1)
+    mid_level_only  : append 'mid level' to keyword search
+    """
     jobs = []
+
+    # Indeed's `fromage` param is in days (minimum 1). For ≤24 h we use fromage=1.
+    fromage = None
+    if hours_fresh:
+        fromage = max(1, hours_fresh // 24 or 1)
+
+    search_keyword = f"{keyword} mid level" if mid_level_only else keyword
 
     for page in range(pages):
         params = {
-            "q": keyword,
+            "q": search_keyword,
             "l": location,
             "start": page * 10,
             "sort": "date",
         }
-        logger.info("Indeed page %d — '%s' in '%s'", page + 1, keyword, location)
+        if fromage:
+            params["fromage"] = str(fromage)
+
+        logger.info("Indeed page %d — '%s' in '%s' (fromage=%s)",
+                    page + 1, search_keyword, location, fromage or "any")
 
         try:
             soup = _get(INDEED_BASE, params=params)
@@ -311,9 +346,18 @@ def save_jobs(jobs: list[dict], fetch_descriptions: bool = False) -> int:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run(field: str, location: str, pages: int = 5,
-        fetch_descriptions: bool = False) -> None:
+        fetch_descriptions: bool = False,
+        hours_fresh: int | None = None,
+        mid_level_only: bool = False) -> None:
+
+    hours_fresh    = hours_fresh    or config.SCRAPE_HOURS_FRESH or None
+    mid_level_only = mid_level_only or config.SCRAPE_MID_LEVEL_ONLY
 
     init_db()
+    logger.info(
+        "Scrape config — fresh: %sh  mid-level: %s  pages: %d",
+        hours_fresh or "any", mid_level_only, pages,
+    )
 
     # Step 1: Build / refresh H1B company list from MyVisaJobs
     logger.info("=== Step 1: Scraping MyVisaJobs for H1B sponsors ===")
@@ -327,13 +371,17 @@ def run(field: str, location: str, pages: int = 5,
     # Step 2: LinkedIn
     logger.info("=== Step 2: LinkedIn scrape ===")
     for kw in config.SEARCH_KEYWORDS:
-        lj = scrape_linkedin(kw, location, pages=pages)
+        lj = scrape_linkedin(kw, location, pages=pages,
+                             hours_fresh=hours_fresh,
+                             mid_level_only=mid_level_only)
         all_jobs.extend(lj)
 
     # Step 3: Indeed
     logger.info("=== Step 3: Indeed scrape ===")
     for kw in config.SEARCH_KEYWORDS:
-        ij = scrape_indeed(kw, location, pages=pages)
+        ij = scrape_indeed(kw, location, pages=pages,
+                           hours_fresh=hours_fresh,
+                           mid_level_only=mid_level_only)
         all_jobs.extend(ij)
 
     # Step 4: Filter
@@ -352,6 +400,27 @@ def run(field: str, location: str, pages: int = 5,
     )
     logger.info("Done. %d jobs saved (%d H1B-confirmed).", total_saved, len(h1b_jobs))
 
+    # ── Slack notification ────────────────────────────────────────────────────
+    if config.SLACK_BOT_TOKEN and config.SLACK_CHANNEL_ID and total_saved > 0:
+        try:
+            from ats_scorer import score_all_pending_jobs
+            from slack_bot import notify_new_jobs
+            top = score_all_pending_jobs(threshold=0)[:5]   # top 5 regardless of threshold
+            notify_new_jobs(total_saved, top)
+            logger.info("Slack notification sent (%d new jobs)", total_saved)
+        except Exception as exc:
+            logger.warning("Slack notify after scrape failed: %s", exc)
+    elif total_saved == 0:
+        if config.SLACK_BOT_TOKEN and config.SLACK_CHANNEL_ID:
+            try:
+                from slack_bot import send_message
+                send_message(
+                    f":mag: Scrape complete — no new jobs found this run.\n"
+                    f"(H1B-confirmed in DB: {len(h1b_jobs)} total)"
+                )
+            except Exception as exc:
+                logger.warning("Slack notify (no new jobs) failed: %s", exc)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Phase 1 — Job scraper with H1B filter")
@@ -360,6 +429,10 @@ if __name__ == "__main__":
     parser.add_argument("--pages", type=int, default=5, help="Pages per source")
     parser.add_argument("--fetch-descriptions", action="store_true",
                         help="Also fetch full JD text (slower)")
+    parser.add_argument("--hours-fresh", type=int, default=None,
+                        help="Only jobs posted within N hours (default: from config)")
+    parser.add_argument("--all-levels", action="store_true",
+                        help="Include all seniority levels (default: mid-level only)")
     args = parser.parse_args()
 
     run(
@@ -367,4 +440,6 @@ if __name__ == "__main__":
         location=args.location,
         pages=args.pages,
         fetch_descriptions=args.fetch_descriptions,
+        hours_fresh=args.hours_fresh,
+        mid_level_only=not args.all_levels,
     )

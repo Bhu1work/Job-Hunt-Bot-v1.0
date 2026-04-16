@@ -433,6 +433,12 @@ def run(job_id: int | None = None, limit: int | None = None,
 
     logger.info("Done. %d contacts found, %d emails drafted.", total_contacts, total_emails)
 
+    try:
+        from notifier import notify_phase3_summary
+        notify_phase3_summary(total_contacts, total_emails, len(jobs))
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Phase 3 — Email finder + cold email drafter")
