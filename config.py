@@ -72,6 +72,8 @@ ATS_MIN_SCORE       = int(os.getenv("ATS_MIN_SCORE", "80"))
 SCRAPE_HOURS_FRESH     = int(os.getenv("SCRAPE_HOURS_FRESH", "4"))
 # Only return mid-level positions (Associate / Mid-Senior on LinkedIn)
 SCRAPE_MID_LEVEL_ONLY  = os.getenv("SCRAPE_MID_LEVEL_ONLY", "true").lower() == "true"
+# Disable Indeed scraping (Indeed blocks automated requests frequently)
+SCRAPE_INDEED_ENABLED  = os.getenv("SCRAPE_INDEED_ENABLED", "false").lower() == "true"
 
 # ── Scraping targets ──────────────────────────────────────────────────────────
 SEARCH_KEYWORDS: list[str] = [

@@ -14,6 +14,7 @@ import argparse
 import logging
 import time
 import re
+from datetime import datetime
 from urllib.parse import urlencode, urljoin, quote_plus
 
 import requests
@@ -177,6 +178,7 @@ def scrape_linkedin(keyword: str, location: str, pages: int = 5,
             logger.info("LinkedIn: no more cards on page %d", page + 1)
             break
 
+        now_utc = datetime.utcnow()
         for card in cards:
             title_tag = card.select_one("h3.base-search-card__title")
             company_tag = card.select_one("h4.base-search-card__subtitle a")
@@ -185,6 +187,20 @@ def scrape_linkedin(keyword: str, location: str, pages: int = 5,
 
             if not (title_tag and company_tag and link_tag):
                 continue
+
+            # Client-side freshness filter — parse <time datetime="..."> if present
+            if hours_fresh:
+                time_tag = card.select_one("time[datetime]")
+                if time_tag:
+                    try:
+                        posted_str = time_tag["datetime"]  # e.g. "2024-04-16T10:00:00.000Z"
+                        posted_str = posted_str.rstrip("Z").split(".")[0]
+                        posted_dt = datetime.strptime(posted_str, "%Y-%m-%dT%H:%M:%S")
+                        age_hours = (now_utc - posted_dt).total_seconds() / 3600
+                        if age_hours > hours_fresh:
+                            continue  # too old — skip
+                    except Exception:
+                        pass  # can't parse time, keep the job
 
             jobs.append({
                 "role": title_tag.get_text(strip=True),
@@ -376,13 +392,16 @@ def run(field: str, location: str, pages: int = 5,
                              mid_level_only=mid_level_only)
         all_jobs.extend(lj)
 
-    # Step 3: Indeed
-    logger.info("=== Step 3: Indeed scrape ===")
-    for kw in config.SEARCH_KEYWORDS:
-        ij = scrape_indeed(kw, location, pages=pages,
-                           hours_fresh=hours_fresh,
-                           mid_level_only=mid_level_only)
-        all_jobs.extend(ij)
+    # Step 3: Indeed (skip if disabled — Indeed blocks bot requests frequently)
+    if config.SCRAPE_INDEED_ENABLED:
+        logger.info("=== Step 3: Indeed scrape ===")
+        for kw in config.SEARCH_KEYWORDS:
+            ij = scrape_indeed(kw, location, pages=pages,
+                               hours_fresh=hours_fresh,
+                               mid_level_only=mid_level_only)
+            all_jobs.extend(ij)
+    else:
+        logger.info("=== Step 3: Indeed scrape SKIPPED (SCRAPE_INDEED_ENABLED=false) ===")
 
     # Step 4: Filter
     logger.info("=== Step 4: Filtering for H1B sponsors ===")
@@ -390,36 +409,46 @@ def run(field: str, location: str, pages: int = 5,
     h1b_jobs = [j for j in all_jobs if j["h1b_confirmed"]]
     logger.info("%d / %d jobs matched H1B sponsors", len(h1b_jobs), len(all_jobs))
 
-    # Step 5: Persist
+    # Step 5: Persist — count DB rows before/after to detect truly NEW jobs
     logger.info("=== Step 5: Saving to DB ===")
-    total_saved = save_jobs(all_jobs, fetch_descriptions=fetch_descriptions)
+    from database import get_db as _get_db
+    with _get_db() as _c:
+        jobs_before = _c.execute("SELECT COUNT(*) FROM jobs WHERE h1b_confirmed=1").fetchone()[0]
 
+    save_jobs(all_jobs, fetch_descriptions=fetch_descriptions)
+
+    with _get_db() as _c:
+        jobs_after = _c.execute("SELECT COUNT(*) FROM jobs WHERE h1b_confirmed=1").fetchone()[0]
+
+    new_h1b_jobs = jobs_after - jobs_before
     log_event(
         "scrape_complete",
-        f"field={field} location={location} total={len(all_jobs)} h1b={len(h1b_jobs)} saved={total_saved}",
+        f"field={field} location={location} total={len(all_jobs)} "
+        f"h1b={len(h1b_jobs)} new={new_h1b_jobs}",
     )
-    logger.info("Done. %d jobs saved (%d H1B-confirmed).", total_saved, len(h1b_jobs))
+    logger.info(
+        "Done. %d H1B jobs in DB (%d newly added this run).",
+        jobs_after, new_h1b_jobs,
+    )
 
     # ── Slack notification ────────────────────────────────────────────────────
-    if config.SLACK_BOT_TOKEN and config.SLACK_CHANNEL_ID and total_saved > 0:
+    if config.SLACK_BOT_TOKEN and config.SLACK_CHANNEL_ID:
         try:
             from ats_scorer import score_all_pending_jobs
-            from slack_bot import notify_new_jobs
-            top = score_all_pending_jobs(threshold=0)[:5]   # top 5 regardless of threshold
-            notify_new_jobs(total_saved, top)
-            logger.info("Slack notification sent (%d new jobs)", total_saved)
+            from slack_bot import notify_new_jobs, send_message
+            if new_h1b_jobs > 0:
+                top = score_all_pending_jobs(threshold=0)[:5]
+                notify_new_jobs(new_h1b_jobs, top)
+                logger.info("Slack notified: %d new H1B jobs", new_h1b_jobs)
+            else:
+                send_message(
+                    f":mag: *Scrape complete* — LinkedIn scanned, no new H1B jobs this run.\n"
+                    f"*{jobs_after} H1B-confirmed jobs* already in DB ready to apply to.\n"
+                    f"Use `/jobs` to see them."
+                )
+                logger.info("Slack notified: no new jobs this run")
         except Exception as exc:
             logger.warning("Slack notify after scrape failed: %s", exc)
-    elif total_saved == 0:
-        if config.SLACK_BOT_TOKEN and config.SLACK_CHANNEL_ID:
-            try:
-                from slack_bot import send_message
-                send_message(
-                    f":mag: Scrape complete — no new jobs found this run.\n"
-                    f"(H1B-confirmed in DB: {len(h1b_jobs)} total)"
-                )
-            except Exception as exc:
-                logger.warning("Slack notify (no new jobs) failed: %s", exc)
 
 
 if __name__ == "__main__":
