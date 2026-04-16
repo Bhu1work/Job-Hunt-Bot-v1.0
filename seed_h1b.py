@@ -39,6 +39,7 @@ H1B_COMPANIES = [
     "TCS", "Wipro", "HCL Technologies", "Tech Mahindra", "Capgemini",
     "EPAM Systems", "Globant", "ThoughtWorks", "Publicis Sapient", "CGI",
     "Booz Allen Hamilton", "SAIC", "Leidos", "Unisys", "Conduent",
+    "LTIMindtree", "UST Global", "Synechron", "Innova Solutions",
 
     # Healthcare / Pharma
     "UnitedHealth Group", "CVS Health", "Anthem", "Aetna", "Pfizer",
@@ -70,8 +71,13 @@ H1B_COMPANIES = [
     "Boeing", "Lockheed Martin", "Raytheon", "Northrop Grumman",
     "General Dynamics", "L3 Technologies", "BAE Systems",
 
-    # Education / Research
+    # Education / Research / Healthcare
     "Coursera", "Udemy", "Duolingo", "Chegg", "2U",
+    "Mayo Clinic", "Washington University",
+
+    # Travel / FinTech / Other
+    "Expedia Group", "Intuit", "ByteDance", "Fiserv",
+    "Hewlett Packard Enterprise", "Cummins",
 
     # Data / Analytics Companies
     "Teradata", "SAS Institute", "Qlik", "MicroStrategy", "ThoughtSpot",

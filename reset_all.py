@@ -2,11 +2,12 @@
 reset_all.py — Wipe all data and start completely fresh.
 
 Clears every table (jobs, companies, tailored_docs, contacts, outreach,
-activity_log) and resets all auto-increment counters.
-The DB schema (tables) is kept so the app boots normally.
+activity_log) and resets all auto-increment counters, then immediately
+re-seeds the H1B company list so /scrape works straight away.
 """
 import sqlite3
-from pathlib import Path
+import subprocess
+import sys
 
 DB_PATH = "data/jobs.db"
 
@@ -32,4 +33,7 @@ c.execute("PRAGMA foreign_keys=ON")
 conn.commit()
 conn.close()
 
-print("\nDone — database wiped. Run /scrape to start fresh.")
+print("\nDatabase wiped. Re-seeding H1B companies...")
+import runpy
+runpy.run_path("seed_h1b.py", run_name="__main__")
+print("\nDone — fresh start ready. Run /scrape in Slack to find new jobs.")
